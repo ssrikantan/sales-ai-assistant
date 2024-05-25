@@ -6,15 +6,14 @@ import openai
 class DefaultConfig:
     """ Bot Configuration """
     PORT = 3978
-    APP_ID = os.environ.get("MicrosoftAppId", "your app id ")
+    APP_ID = os.environ.get("MicrosoftAppId", "")
     APP_PASSWORD = os.environ.get("MicrosoftAppPassword", "")
 
-    az_openai_key = ""
-    az_openai_baseurl = "https://your -oaoi -endpoinet.openai.azure.com/"
+    az_openai_key = "xxxxxxxxxxyour -oaoi -endpoinet.openai.azure.com/"
     az_openai_version = "2024-05-01-preview" # required for the assistants API v2
     deployment_name = "gpt4-0"
     # deployment_name = "gpt-4-0125-preview"
-    assistant_id = "use your assistant id"
-    vector_store_id = "use your vector store id"
+    assistant_id = ""
+    vector_store_id = ""
 
     az_application_insights_key = ''
