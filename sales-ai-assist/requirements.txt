@@ -1,0 +1,10 @@
+openai
+botbuilder-integration-aiohttp>=4.14.0
+pyodbc
+pillow
+azure-search-documents
+azure-core
+ipython
+opencensus-ext-azure
+
+
