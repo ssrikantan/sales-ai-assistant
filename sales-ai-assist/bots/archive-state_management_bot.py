@@ -18,7 +18,7 @@ import base64
 import glob
 
 
-class StateManagementBot(ActivityHandler):
+class Archive_StateManagementBot(ActivityHandler):
 
     connection = None
     user_response_system_prompt = None
@@ -32,6 +32,12 @@ class StateManagementBot(ActivityHandler):
             "type": "file_search"
         }
     ]
+
+    def init_meta_prompt(self) -> any:
+        # read all lines from a text file
+        with open("metaprompt-1.txt", "r") as file:
+            data = file.read().replace("\n", "")
+        return data
 
 
     def __init__(self, conversation_state: ConversationState, user_state: UserState):
@@ -48,16 +54,37 @@ class StateManagementBot(ActivityHandler):
         self.user_state = user_state
         self.config =  DefaultConfig()
 
+        
         # Create Azure OpenAI client
         self.client = AzureOpenAI(
                 api_key=self.config.az_openai_key,
                 azure_endpoint=self.config.az_openai_baseurl,
                 api_version=self.config.az_openai_version
             )
+            # self.update_vector_database()
+            # self.create_vector_database()
+
+        # Run the following lines of code to create a new Assistant and get the assistant id
+        #     StateManagementBot.assistant = StateManagementBot.client.beta.assistants.create(
+        #     name="Contoso Pre Sales Team Assistant",
+        #     instructions=StateManagementBot.init_meta_prompt(),
+        #     tools=StateManagementBot.tools,
+        #     model=self.config.deployment_name
+        # )
+            
+        # self.create_vector_database() # run this once to create a new vector database
+
+        # print('assistant created!',StateManagementBot.assistant.id)
+        # # display information about the assistant
+        # print(StateManagementBot.assistant.model_dump_json(indent=2))
+        # print(StateManagementBot.client.beta.assistants.list().model_dump_json(indent=2))
+
         self.conversation_data_accessor = self.conversation_state.create_property(
             "ConversationData"
         )
         self.user_profile_accessor = self.user_state.create_property("UserProfile")
+
+
 
     async def on_message_activity(self, turn_context: TurnContext):
         
@@ -72,6 +99,8 @@ class StateManagementBot(ActivityHandler):
             if conversation_data.prompted_for_user_name:
                 # Set the name to what the user provided.
                 user_profile.name = turn_context.activity.text
+
+                conversation_data.chat_history = self.init_meta_prompt()
 
                 # Acknowledge that we got their name.
                 await turn_context.send_activity(
@@ -116,24 +145,9 @@ class StateManagementBot(ActivityHandler):
             thread_messages = self.client.beta.threads.messages.list(l_thread.id)
             print('list of all messages: \n',thread_messages.model_dump_json(indent=2))
 
-        #     run = self.client.beta.threads.runs.create_and_poll(
-        #     thread_id=l_thread.id, assistant_id=self.config.assistant_id
-        # )
-        # The above method was not working consistently, 
-        # hence polling the run status manually below
-
-            run = self.client.beta.threads.runs.create(
+            run = self.client.beta.threads.runs.create_and_poll(
             thread_id=l_thread.id, assistant_id=self.config.assistant_id
         )
-
-            run = self.wait_for_run(run, l_thread.id)
-            if run.status == 'failed':
-                print('run has failed, extracting results ...')
-                print('the thread run has failed !! \n',run.model_dump_json(indent=2))
-                return await turn_context.send_activity(
-                        f"{ user_profile.name } : { 'Sorry, I am unable to process your request at the moment. Please try again later.' }"
-                    )
-            print('run has completed, extracting results ...')
             print('the thread has run!! \n',run.model_dump_json(indent=2))
 
             messages = self.client.beta.threads.messages.list(thread_id=l_thread.id)
@@ -146,7 +160,7 @@ class StateManagementBot(ActivityHandler):
             file_content = None
             file_id = ''
             image_data_bytes = None
-
+            counter = 0
             for item in messages_json['data']:
                 # Check the content array
                 for content in item['content']:
@@ -159,7 +173,9 @@ class StateManagementBot(ActivityHandler):
                         file_id = content['image_file']['file_id']
                         file_content = self.client.files.content(file_id)
                         image_data_bytes = file_content.read()
-                break
+                counter += 1
+                if counter == 1:
+                    break
 
             if image_data_bytes is not None:
                 reply = Activity(type=ActivityTypes.message)
@@ -174,21 +190,12 @@ class StateManagementBot(ActivityHandler):
                     content_url=f"data:image/png;base64,{base64_image}"
                 )
                 reply.attachments = [attachment]
-                return await turn_context.send_activity(reply)
+                await turn_context.send_activity(reply)
             else:
-                return await turn_context.send_activity(
+                await turn_context.send_activity(
                         f"{ user_profile.name } : { action_response_to_user }"
                     )
-    # function returns the run when status is no longer queued or in_progress
-    def wait_for_run(self, run, thread_id):
-        while run.status == 'queued' or run.status == 'in_progress':
-            run = self.client.beta.threads.runs.retrieve(
-                    thread_id=thread_id,
-                    run_id=run.id
-            )
-            print("Run status:", run.status)
-            time.sleep(0.5)
-        return run
+            return
 
     async def on_turn(self, turn_context: TurnContext):
         await super().on_turn(turn_context)
