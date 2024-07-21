@@ -12,7 +12,7 @@ class DefaultConfig:
     APP_TENANTID = "" # leave empty for MultiTenant
 
     az_openai_key = ""
-    az_openai_baseurl = "https://.openai.azure.com/"
+    az_openai_baseurl = "https://yourep.openai.azure.com/"
     az_openai_version = "2024-05-01-preview" # required for the assistants API v2
     deployment_name = "gpt4-0"
     assistant_id = ""

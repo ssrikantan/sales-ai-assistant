@@ -1,7 +1,6 @@
 from botbuilder.core import ActivityHandler, ConversationState, TurnContext, UserState
 from botbuilder.schema import ChannelAccount
 
-# from rpay_chat_bot.user_profile import UserProfile
 from data_models.user_profile import UserProfile
 from data_models.conversation_data import ConversationData
 import time
@@ -9,23 +8,12 @@ from datetime import datetime
 from openai import AzureOpenAI
 from typing_extensions import override
 from openai import AssistantEventHandler, OpenAI
-import sys
+
 from config import DefaultConfig
 import json
-import os
-from botbuilder.schema import HeroCard, CardAction, ActionTypes, CardImage, Attachment, Activity, ActivityTypes
-from botbuilder.core import TurnContext, MessageFactory, CardFactory
-import base64
-import pyodbc
-import inspect
-import requests
-import openai
-import io
-from azure.core.credentials import AzureKeyCredential
-from azure.search.documents import SearchClient
 
-from PIL import Image
-from IPython.display import display
+from botbuilder.schema import Attachment, Activity, ActivityTypes
+from botbuilder.core import TurnContext, MessageFactory, CardFactory
 import base64
 import glob
 
@@ -173,7 +161,7 @@ class StateManagementBot(ActivityHandler):
                 conversation_data.prompted_for_user_name = False
             else:
                 # Prompt the user for their name.
-                await turn_context.send_activity("I am your AI Employee Assistant for Contoso Retail. I can help you quickly get to it!"+\
+                await turn_context.send_activity("I am your AI Assistant for Sales. I can help you quickly get to it!"+\
                                                   "Can you help me with your name?")
 
                 # Set the flag to true, so we don't prompt in the next turn.
@@ -207,11 +195,61 @@ class StateManagementBot(ActivityHandler):
             thread_messages = StateManagementBot.client.beta.threads.messages.list(l_thread.id)
             print('list of all messages: \n',thread_messages.model_dump_json(indent=2))
 
+            run = StateManagementBot.client.beta.threads.runs.create_and_poll(
+            thread_id=l_thread.id, assistant_id=self.config.assistant_id
+        )
+            print('the thread has run!! \n',run.model_dump_json(indent=2))
+
+            messages = StateManagementBot.client.beta.threads.messages.list(thread_id=l_thread.id)
+            print('Messages are **** \n',messages.model_dump_json(indent=2))
+
+
             # Use this when streaming is not required
             # response_msg = StateManagementBot.get_file_search_response(l_thread.id, self.config.assistant_id)
-            await turn_context.send_activity(
-                        f"{ user_profile.name } : { StateManagementBot.get_file_search_response(l_thread.id, self.config.assistant_id) }"
+            messages_json = json.loads(messages.model_dump_json())
+            print('response messages_json>\n',messages_json)
+            action_response_to_user = ''
+            file_content = None
+            file_id = ''
+            image_data_bytes = None
+            counter = 0
+            for item in messages_json['data']:
+                # Check the content array
+                for content in item['content']:
+                    # If there is text in the content array, print it
+                    if 'text' in content:
+                        print(StateManagementBot.role_icon(item["role"]),content['text']['value'], "\n")
+                        action_response_to_user = content['text']['value'] + "\n"
+                    # If there is an image_file in the content, print the file_id
+                    if 'image_file' in content:
+                        print("Image ID:" , content['image_file']['file_id'], "\n")
+                        file_id = content['image_file']['file_id']
+                        file_content = StateManagementBot.client.files.content(file_id)
+                        image_data_bytes = file_content.read()
+                counter += 1
+                if counter == 1:
+                    break
+
+            if image_data_bytes is not None:
+                reply = Activity(type=ActivityTypes.message)
+                reply.text = action_response_to_user
+                file_path = file_id+".png"
+                # with open(file_path, "rb") as in_file:
+                #     base64_image = base64.b64encode(in_file.read()).decode()
+                base64_image = base64.b64encode(image_data_bytes).decode()
+                # Create an attachment with the base64 image
+                attachment = Attachment(
+                    name=file_id+".png",
+                    content_type="image/png",
+                    content_url=f"data:image/png;base64,{base64_image}"
+                )
+                reply.attachments = [attachment]
+                await turn_context.send_activity(reply)
+            else:
+                await turn_context.send_activity(
+                        f"{ user_profile.name } : { action_response_to_user }"
                     )
+            return
 
             # Use this when streaming is required
             # response_msg = StateManagementBot.stream_file_search_response(l_thread.id, self.config.assistant_id)
@@ -226,14 +264,28 @@ class StateManagementBot(ActivityHandler):
             #     # await turn_context.send_activity(Activity(text=text_value))
             #     await turn_context.send_activity(Activity(id=activity_id,text=text_value))
 
-            return
-    
-    def role_icon(role):
-        if role == "user":
-            return "👤"
-        elif role == "assistant":
-            return "🤖"
+            # return
 
+    # function to get the file search response, without streaming the response
+    def get_file_search_response(thread_id,run_id):
+        messages = list(StateManagementBot.client.beta.threads.messages.list(thread_id=thread_id, run_id=run_id))
+        print('the messages are :',messages)
+        if messages[0].content[0].text:
+            message_content = messages[0].content[0].text
+            print('the number of citations are :',len(message_content.annotations))
+            annotations = message_content.annotations
+            citations = []
+            for index, annotation in enumerate(annotations):
+                message_content.value = message_content.value.replace(annotation.text, f"[{index}]")
+                if file_citation := getattr(annotation, "file_citation", None):
+                    cited_file = StateManagementBot.client.files.retrieve(file_citation.file_id)
+                    citations.append(f"[{index}] {cited_file.filename}")
+
+            print('message content ----> \n',message_content.value)
+            print('the citations are below \n',citations)
+            return message_content.value +  "\n".join(citations)
+        else:
+            return "No response found"
 
     # function to get the file search response, by streaming the response
     def stream_file_search_response(thread_id, assistant_id):
@@ -245,45 +297,11 @@ class StateManagementBot(ActivityHandler):
             for event in stream:
                 yield event
 
-    # function to get the file search response, without streaming the response
-    def get_file_search_response(thread_id, assistant_id):
-        run = StateManagementBot.client.beta.threads.runs.create_and_poll(
-            thread_id=thread_id, assistant_id=assistant_id
-        )
-
-        messages = list(StateManagementBot.client.beta.threads.messages.list(thread_id=thread_id, run_id=run.id))
-
-        message_content = messages[0].content[0].text
-        print('the number of citations are :',len(message_content.annotations))
-        annotations = message_content.annotations
-        citations = []
-        for index, annotation in enumerate(annotations):
-            message_content.value = message_content.value.replace(annotation.text, f"[{index}]")
-            if file_citation := getattr(annotation, "file_citation", None):
-                cited_file = StateManagementBot.client.files.retrieve(file_citation.file_id)
-                citations.append(f"[{index}] {cited_file.filename}")
-
-        print('message content ----> \n',message_content.value)
-        print('the citations are below \n',citations)
-        return message_content.value +  "\n".join(citations)
-
-    # function returns the run when status is no longer queued or in_progress
-    def wait_for_run(run, thread_id):
-        while run.status == 'queued' or run.status == 'in_progress':
-            run = StateManagementBot.client.beta.threads.runs.retrieve(
-                    thread_id=thread_id,
-                    run_id=run.id
-            )
-            print("Run status:", run.status)
-            time.sleep(0.5)
-
-        return run
-    
-
-
-    
-
-
+    def role_icon(role):
+        if role == "user":
+            return "👤"
+        elif role == "assistant":
+            return "🤖"
 
     async def on_turn(self, turn_context: TurnContext):
         await super().on_turn(turn_context)
@@ -309,8 +327,6 @@ class StateManagementBot(ActivityHandler):
         }
     ]
 
-
-
     # helper method used to check if the correct arguments are provided to a function
     def check_args(function, args):
         print('checking function parameters')
@@ -324,7 +340,6 @@ class StateManagementBot(ActivityHandler):
         for name, param in params.items():
             if param.default is param.empty and name not in args:
                 return False
-
         return True
 
 
